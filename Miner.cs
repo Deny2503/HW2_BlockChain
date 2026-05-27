@@ -11,10 +11,24 @@ namespace HW2_BlockChain
 {
     public class Miner
     {
+        private string GetTransactionsText(List<Transaction> transactions)
+        {
+            StringBuilder builder = new StringBuilder();
+
+            foreach (Transaction transaction in transactions)
+            {
+                builder.Append(transaction.From);
+                builder.Append(transaction.To);
+                builder.Append(transaction.Amount);
+            }
+
+            return builder.ToString();
+        }
+
         public MiningResult Mine(Block block)
         {
             byte[] prefixBytes = Encoding.UTF8.GetBytes(
-                block.PreviousHash + block.Data + block.Timestamp
+                block.PreviousHash + GetTransactionsText(block.Transactions) + block.Timestamp
             );
 
             int threadCount = Environment.ProcessorCount;
