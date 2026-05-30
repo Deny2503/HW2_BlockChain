@@ -9,11 +9,13 @@ namespace HW2_BlockChain
     public class Blockchain
     {
         public List<Block> Chain { get; }
+
         private const int Difficulty = 4;
 
         public Blockchain()
         {
             Chain = new List<Block>();
+
             CreateGenesisBlock();
         }
 
@@ -33,12 +35,32 @@ namespace HW2_BlockChain
 
         public void AddBlock(List<Transaction> transactions)
         {
+            List<Transaction> validTransactions = new();
+
+            foreach (Transaction transaction in transactions)
+            {
+                if (transaction.IsValid())
+                {
+                    validTransactions.Add(transaction);
+                }
+                else
+                {
+                    Console.WriteLine("Transaction rejected.");
+                }
+            }
+
+            if (validTransactions.Count == 0)
+            {
+                Console.WriteLine("No valid transactions for block.");
+                return;
+            }
+
             Block previousBlock = Chain[^1];
 
             Block newBlock = new Block(
                 index: Chain.Count,
                 previousHash: previousBlock.Hash,
-                transactions: transactions,
+                transactions: validTransactions,
                 difficulty: Difficulty
             );
 
@@ -50,6 +72,8 @@ namespace HW2_BlockChain
             newBlock.Hash = result.Hash;
 
             Chain.Add(newBlock);
+
+            Console.WriteLine($"Block #{newBlock.Index} added.");
         }
     }
 }

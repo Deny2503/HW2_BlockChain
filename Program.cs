@@ -1,38 +1,62 @@
 ﻿using HW2_BlockChain;
 
 Blockchain blockchain = new Blockchain();
+BlockchainDisplay display = new BlockchainDisplay();
+
+Wallet alice = new Wallet("Alice");
+Wallet bob = new Wallet("Bob");
+
+display.PrintWalletCard(alice);
+display.PrintWalletCard(bob);
+
+Console.WriteLine("NORMAL TRANSACTION");
+
+Transaction normalTransaction = new Transaction(
+    alice.Address,
+    bob.Address,
+    25,
+    alice.PublicKey
+);
+
+normalTransaction.Sign(alice);
 
 blockchain.AddBlock(new List<Transaction>
 {
-    new Transaction("Alice", "Bob", 50),
-    new Transaction("Bob", "Charlie", 15),
-    new Transaction("Alice", "David", 20)
+    normalTransaction
 });
+
+Console.WriteLine();
+Console.WriteLine("IDENTITY THEFT ATTACK");
+
+Transaction fakeTransaction = new Transaction(
+    alice.Address,
+    bob.Address,
+    100,
+    bob.PublicKey
+);
+
+fakeTransaction.Sign(bob);
 
 blockchain.AddBlock(new List<Transaction>
 {
-    new Transaction("Charlie", "Alice", 5),
-    new Transaction("David", "Bob", 70),
-    new Transaction("Bob", "Alice", 10)
+    fakeTransaction
 });
+
+Console.WriteLine();
+Console.WriteLine("BROKEN SIGNATURE");
+
+Transaction brokenTransaction = new Transaction(
+    alice.Address,
+    bob.Address,
+    10,
+    alice.PublicKey
+);
+
+brokenTransaction.Sign(alice);
+
+brokenTransaction.Signature[0]++;
 
 blockchain.AddBlock(new List<Transaction>
 {
-    new Transaction("Alice", "Eve", 100),
-    new Transaction("Eve", "Charlie", 25),
-    new Transaction("Charlie", "David", 30)
+    brokenTransaction
 });
-
-blockchain.AddBlock(new List<Transaction>
-{
-    new Transaction("Bob", "Alice", 12),
-    new Transaction("David", "Eve", 200),
-    new Transaction("Eve", "Bob", 40)
-});
-
-Display display = new Display(blockchain);
-
-display.PrintTransactionHistory("Alice");
-display.PrintTransactionHistory("Batman");
-
-display.PrintBiggestTransaction();
