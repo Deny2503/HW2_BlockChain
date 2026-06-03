@@ -9,54 +9,53 @@ Wallet bob = new Wallet("Bob");
 display.PrintWalletCard(alice);
 display.PrintWalletCard(bob);
 
-Console.WriteLine("NORMAL TRANSACTION");
+Console.WriteLine("===== RBF TEST =====");
 
-Transaction normalTransaction = new Transaction(
+Transaction oldTransaction = new Transaction(
     alice.Address,
     bob.Address,
-    25,
-    alice.PublicKey
+    amount: 10,
+    senderPublicKey: alice.PublicKey,
+    fee: 25
 );
 
-normalTransaction.Sign(alice);
+oldTransaction.Sign(alice);
+blockchain.AddTransaction(oldTransaction);
 
-blockchain.AddBlock(new List<Transaction>
-{
-    normalTransaction
-});
+Console.WriteLine("\nMempool BEFORE RBF:");
+PrintMempool(blockchain);
 
-Console.WriteLine();
-Console.WriteLine("IDENTITY THEFT ATTACK");
-
-Transaction fakeTransaction = new Transaction(
+Transaction newTransaction = new Transaction(
     alice.Address,
     bob.Address,
-    100,
-    bob.PublicKey
+    amount: 10,
+    senderPublicKey: alice.PublicKey,
+    fee: 50
 );
 
-fakeTransaction.Sign(bob);
+newTransaction.ReplacesTxId = oldTransaction.Id;
+newTransaction.Sign(alice);
 
-blockchain.AddBlock(new List<Transaction>
+blockchain.AddTransaction(newTransaction);
+
+Console.WriteLine("\nMempool AFTER RBF:");
+PrintMempool(blockchain);
+
+static void PrintMempool(Blockchain blockchain)
 {
-    fakeTransaction
-});
+    Console.WriteLine($"Current network fee: {blockchain.GetCurrentNetworkFee():F2} per byte");
+    Console.WriteLine($"Transactions in mempool: {blockchain.PendingTransactions.Count}");
 
-Console.WriteLine();
-Console.WriteLine("BROKEN SIGNATURE");
-
-Transaction brokenTransaction = new Transaction(
-    alice.Address,
-    bob.Address,
-    10,
-    alice.PublicKey
-);
-
-brokenTransaction.Sign(alice);
-
-brokenTransaction.Signature[0]++;
-
-blockchain.AddBlock(new List<Transaction>
-{
-    brokenTransaction
-});
+    foreach (Transaction transaction in blockchain.PendingTransactions)
+    {
+        Console.WriteLine(
+            $"ID: {transaction.Id[..12]}... | " +
+            $"From: {transaction.From[..12]}... | " +
+            $"To: {transaction.To[..12]}... | " +
+            $"Amount: {transaction.Amount} | " +
+            $"Fee: {transaction.Fee} | " +
+            $"Size: {transaction.Size} bytes | " +
+            $"Replaces: {(transaction.ReplacesTxId == null ? "none" : transaction.ReplacesTxId[..12] + "...")}"
+        );
+    }
+}
