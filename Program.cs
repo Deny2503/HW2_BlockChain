@@ -1,90 +1,60 @@
 ﻿using HW2_BlockChain;
 
 Blockchain blockchain = new Blockchain();
-BlockchainDisplay display = new BlockchainDisplay();
+Wallet miner = new Wallet("Miner");
+Wallet helper = new Wallet("Helper");
 
-Wallet alice = new Wallet("Alice");
-Wallet bob = new Wallet("Bob");
-Wallet charlie = new Wallet("Charlie");
+Console.WriteLine("===== COINBASE MATURITY TEST =====");
+Console.WriteLine($"Coinbase maturity rule: {blockchain.CoinbaseMaturity} confirmations");
 
-display.PrintWalletCard(alice);
-display.PrintWalletCard(bob);
-
-Console.WriteLine("\n===== MERKLE PROOF / SPV TEST =====");
-
-Transaction secondTransaction = new Transaction(
-    bob.Address,
-    charlie.Address,
-    amount: 4,
-    senderPublicKey: bob.PublicKey,
-    fee: 80
-);
-secondTransaction.Sign(bob);
-blockchain.AddTransaction(secondTransaction);
-
-Transaction thirdTransaction = new Transaction(
-    charlie.Address,
-    alice.Address,
-    amount: 2,
-    senderPublicKey: charlie.PublicKey,
-    fee: 120
-);
-thirdTransaction.Sign(charlie);
-blockchain.AddTransaction(thirdTransaction);
-
-blockchain.AddBlock(blockchain.PendingTransactions.ToList());
-
-Block lastBlock = blockchain.Chain[^1];
-Transaction transactionForProof = lastBlock.Transactions[1];
-string transactionHash = transactionForProof.Id;
-
-List<MerkleProofItem> proof = MerkleAuditor.GetMerkleProof(
-    lastBlock.MerkleTree,
-    transactionHash
+Transaction minerReward = new Transaction(
+    from: "COINBASE",
+    to: miner.Address,
+    amount: 50,
+    senderPublicKey: "",
+    fee: 0
 );
 
-Console.WriteLine($"Selected transaction hash: {transactionHash}");
-Console.WriteLine($"Merkle proof elements count: {proof.Count}");
+blockchain.AddBlock(new List<Transaction> { minerReward });
+PrintCoinbaseStatus(blockchain, miner.Address, minerReward.Id, "After mining reward block");
 
-for (int i = 0; i < proof.Count; i++)
+for (int i = 1; i <= blockchain.CoinbaseMaturity; i++)
 {
-    string side = proof[i].IsLeftNeighbor ? "left" : "right";
-    Console.WriteLine($"Proof #{i + 1}: neighbor on {side}, hash = {proof[i].Hash}");
+    Transaction fillerReward = new Transaction(
+        from: "COINBASE",
+        to: helper.Address,
+        amount: 1,
+        senderPublicKey: "",
+        fee: 0
+    );
+
+    blockchain.AddBlock(new List<Transaction> { fillerReward });
+    PrintCoinbaseStatus(blockchain, miner.Address, minerReward.Id, $"After {i} extra block(s)");
 }
 
-string originalMerkleRoot = lastBlock.MerkleRoot;
-Console.WriteLine($"Original Merkle Root from block: {originalMerkleRoot}");
+Console.WriteLine("\nResult: miner reward appears in balance only after enough confirmations.");
 
-bool isVerified = MerkleAuditor.VerifyMerkleProof(
-    transactionHash,
-    proof,
-    originalMerkleRoot
-);
-
-if (isVerified)
+static void PrintCoinbaseStatus(
+    Blockchain blockchain,
+    string minerAddress,
+    string rewardTransactionId,
+    string label)
 {
-    Console.WriteLine("SPV verification success: transaction is proven without downloading all block transactions.");
-}
-else
-{
-    Console.WriteLine("SPV verification failed: transaction proof is invalid.");
-}
+    Block? rewardBlock = blockchain.Chain.FirstOrDefault(block =>
+        block.Transactions.Any(transaction => transaction.Id == rewardTransactionId));
 
-static void PrintMempool(Blockchain blockchain)
-{
-    Console.WriteLine($"Current network fee: {blockchain.GetCurrentNetworkFee():F2} per byte");
-    Console.WriteLine($"Transactions in mempool: {blockchain.PendingTransactions.Count}");
-
-    foreach (Transaction transaction in blockchain.PendingTransactions)
+    if (rewardBlock == null)
     {
-        Console.WriteLine(
-            $"ID: {transaction.Id[..12]}... | " +
-            $"From: {transaction.From[..12]}... | " +
-            $"To: {transaction.To[..12]}... | " +
-            $"Amount: {transaction.Amount} | " +
-            $"Fee: {transaction.Fee} | " +
-            $"Size: {transaction.Size} bytes | " +
-            $"Replaces: {(transaction.ReplacesTxId == null ? "none" : transaction.ReplacesTxId[..12] + "...")}"
-        );
+        Console.WriteLine($"\n{label}");
+        Console.WriteLine("Reward block was not found in the chain.");
+        return;
     }
+
+    int confirmations = blockchain.Chain.Count - rewardBlock.Index;
+    decimal balance = blockchain.GetBalance(minerAddress);
+
+    Console.WriteLine($"\n{label}");
+    Console.WriteLine($"Reward block index: {rewardBlock.Index}");
+    Console.WriteLine($"Confirmations: {confirmations}");
+    Console.WriteLine($"Miner balance: {balance}");
 }

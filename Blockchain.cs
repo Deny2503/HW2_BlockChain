@@ -13,6 +13,7 @@ namespace HW2_BlockChain
 
         public decimal BaseFeePerByte { get; } = 0.05m;
         public int MaxBlockSizeBytes { get; } = 1024;
+        public int CoinbaseMaturity { get; set; } = 3;
 
         private const int Difficulty = 4;
 
@@ -38,6 +39,63 @@ namespace HW2_BlockChain
             );
 
             return BaseFeePerByte * congestionMultiplier;
+        }
+
+        public decimal GetBalance(string address)
+        {
+            decimal balance = 0;
+
+            foreach (Block block in Chain)
+            {
+                foreach (Transaction transaction in block.Transactions)
+                {
+                    if (transaction.To == address)
+                    {
+                        if (transaction.From == "COINBASE")
+                        {
+                            int confirmations = Chain.Count - block.Index;
+
+                            if (confirmations >= CoinbaseMaturity)
+                            {
+                                balance += transaction.Amount;
+                            }
+                        }
+                        else
+                        {
+                            balance += transaction.Amount;
+                        }
+                    }
+
+                    if (transaction.From == address)
+                    {
+                        balance -= transaction.Amount;
+                        balance -= transaction.Fee;
+                    }
+                }
+            }
+
+            return balance;
+        }
+
+        public decimal GetPendingBalance(string address)
+        {
+            decimal balance = GetBalance(address);
+
+            foreach (Transaction transaction in PendingTransactions)
+            {
+                if (transaction.From == address)
+                {
+                    balance -= transaction.Amount;
+                    balance -= transaction.Fee;
+                }
+
+                if (transaction.To == address && transaction.From != "COINBASE")
+                {
+                    balance += transaction.Amount;
+                }
+            }
+
+            return balance;
         }
 
         public void AddTransaction(Transaction transaction)
