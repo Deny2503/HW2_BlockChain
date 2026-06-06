@@ -41,6 +41,7 @@ namespace HW2_BlockChain
             return BaseFeePerByte * congestionMultiplier;
         }
 
+
         public decimal GetBalance(string address)
         {
             decimal balance = 0;
@@ -105,15 +106,30 @@ namespace HW2_BlockChain
                 throw new Exception("Транзакція не пройшла перевірку підпису");
             }
 
-            decimal currentFeePerByte = GetCurrentNetworkFee();
-            decimal minimumRequiredFee = transaction.Size * currentFeePerByte;
+            bool isCoinbase = transaction.From == "COINBASE";
 
-            if (transaction.Fee < minimumRequiredFee)
+            if (!isCoinbase)
             {
-                throw new Exception(
-                    $"Комісія занадто мала. Мінімум: {minimumRequiredFee:F2}, " +
-                    $"поточний тариф: {currentFeePerByte:F2} за байт"
-                );
+                decimal currentFeePerByte = GetCurrentNetworkFee();
+                decimal minimumRequiredFee = transaction.Size * currentFeePerByte;
+
+                if (transaction.Fee < minimumRequiredFee)
+                {
+                    throw new Exception(
+                        $"Комісія занадто мала. Мінімум: {minimumRequiredFee:F2}, " +
+                        $"поточний тариф: {currentFeePerByte:F2} за байт"
+                    );
+                }
+
+                decimal availableBalance = GetPendingBalance(transaction.From);
+                decimal totalCost = transaction.Amount + transaction.Fee;
+
+                if (availableBalance < totalCost)
+                {
+                    throw new Exception(
+                        $"Недостатньо коштів. Доступно: {availableBalance:F2}, потрібно: {totalCost:F2}"
+                    );
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(transaction.ReplacesTxId))
@@ -165,13 +181,13 @@ namespace HW2_BlockChain
 
             foreach (Transaction transaction in transactions)
             {
-                if (transaction.IsValid())
+                if (transaction.From == "COINBASE" || transaction.IsValid())
                 {
                     validTransactions.Add(transaction);
                 }
                 else
                 {
-                    Console.WriteLine("Transaction rejected.");
+                    Console.WriteLine("Transaction rejected: invalid signature.");
                 }
             }
 
