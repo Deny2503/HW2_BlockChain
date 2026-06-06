@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -40,7 +41,6 @@ namespace HW2_BlockChain
 
             return BaseFeePerByte * congestionMultiplier;
         }
-
 
         public decimal GetBalance(string address)
         {
@@ -107,7 +107,6 @@ namespace HW2_BlockChain
             }
 
             bool isCoinbase = transaction.From == "COINBASE";
-
             if (!isCoinbase)
             {
                 decimal currentFeePerByte = GetCurrentNetworkFee();
@@ -159,6 +158,107 @@ namespace HW2_BlockChain
             }
 
             PendingTransactions.Add(transaction);
+        }
+
+        public bool TryAddBlockFromPeer(Block peerBlock)
+        {
+            if (!IsValidPeerBlock(peerBlock))
+            {
+                Console.WriteLine("[P2P] Peer block rejected: invalid hash, index, previous hash, structure or Proof of Work.");
+                return false;
+            }
+
+            Chain.Add(peerBlock);
+
+            foreach (Transaction transaction in peerBlock.Transactions)
+            {
+                PendingTransactions.RemoveAll(pending => pending.Id == transaction.Id);
+            }
+
+            Console.WriteLine($"[P2P] Peer block #{peerBlock.Index} added to chain.");
+            return true;
+        }
+
+        private bool IsValidPeerBlock(Block peerBlock)
+        {
+            if (peerBlock == null)
+            {
+                return false;
+            }
+
+            Block previousBlock = Chain[^1];
+
+            if (peerBlock.Index != previousBlock.Index + 1)
+            {
+                return false;
+            }
+
+            if (peerBlock.PreviousHash != previousBlock.Hash)
+            {
+                return false;
+            }
+
+            if (peerBlock.Transactions == null || peerBlock.Transactions.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (Transaction transaction in peerBlock.Transactions)
+            {
+                if (!transaction.IsValid())
+                {
+                    return false;
+                }
+            }
+
+            string recalculatedHash = CalculateBlockHash(peerBlock, peerBlock.Nonce);
+
+            if (peerBlock.Hash != recalculatedHash)
+            {
+                return false;
+            }
+
+            try
+            {
+                byte[] hashBytes = Convert.FromHexString(peerBlock.Hash);
+                return HashValidator.IsValid(hashBytes, peerBlock.Difficulty);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private string CalculateBlockHash(Block block, int nonce)
+        {
+            byte[] prefixBytes = Encoding.UTF8.GetBytes(
+                block.PreviousHash + GetTransactionsText(block.Transactions) + block.Timestamp
+            );
+
+            byte[] buffer = new byte[prefixBytes.Length + 4];
+            Array.Copy(prefixBytes, buffer, prefixBytes.Length);
+
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(
+                buffer.AsSpan(prefixBytes.Length, 4),
+                nonce
+            );
+
+            byte[] hashBytes = SHA256.HashData(buffer);
+            return HashConverter.ToHex(hashBytes);
+        }
+
+        private string GetTransactionsText(List<Transaction> transactions)
+        {
+            StringBuilder builder = new StringBuilder();
+
+            foreach (Transaction transaction in transactions)
+            {
+                builder.Append(transaction.From);
+                builder.Append(transaction.To);
+                builder.Append(transaction.Amount);
+            }
+
+            return builder.ToString();
         }
 
         private void CreateGenesisBlock()

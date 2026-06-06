@@ -1,60 +1,101 @@
-﻿using HW2_BlockChain;
+﻿using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using HW2_BlockChain;
 
 Blockchain blockchain = new Blockchain();
-Wallet miner = new Wallet("Miner");
-Wallet helper = new Wallet("Helper");
+P2PNetworkService p2pNetworkService = new P2PNetworkService(blockchain, port: 5000);
+Task? serverTask = null;
 
-Console.WriteLine("===== COINBASE MATURITY TEST =====");
-Console.WriteLine($"Coinbase maturity rule: {blockchain.CoinbaseMaturity} confirmations");
-
-Transaction minerReward = new Transaction(
-    from: "COINBASE",
-    to: miner.Address,
-    amount: 50,
-    senderPublicKey: "",
-    fee: 0
-);
-
-blockchain.AddBlock(new List<Transaction> { minerReward });
-PrintCoinbaseStatus(blockchain, miner.Address, minerReward.Id, "After mining reward block");
-
-for (int i = 1; i <= blockchain.CoinbaseMaturity; i++)
+while (true)
 {
-    Transaction fillerReward = new Transaction(
-        from: "COINBASE",
-        to: helper.Address,
-        amount: 1,
-        senderPublicKey: "",
-        fee: 0
-    );
+    Console.WriteLine();
+    Console.WriteLine("1. Start P2P node");
+    Console.WriteLine("2. Send invalid JSON test packet");
+    Console.WriteLine("3. Send fake block test packet");
+    Console.WriteLine("4. Show Firewall Blacklist");
+    Console.WriteLine("0. Exit");
+    Console.Write("Choose option: ");
 
-    blockchain.AddBlock(new List<Transaction> { fillerReward });
-    PrintCoinbaseStatus(blockchain, miner.Address, minerReward.Id, $"After {i} extra block(s)");
+    string? choice = Console.ReadLine();
+
+    switch (choice)
+    {
+        case "1":
+            if (serverTask == null)
+            {
+                serverTask = Task.Run(() => p2pNetworkService.StartAsync());
+                await Task.Delay(300);
+            }
+            else
+            {
+                Console.WriteLine("P2P node is already started.");
+            }
+            break;
+
+        case "2":
+            await SendRawPacketAsync("THIS_IS_NOT_JSON");
+            break;
+
+        case "3":
+            await SendFakeBlockAsync(blockchain);
+            break;
+
+        case "4":
+            p2pNetworkService.ShowFirewallBlacklist();
+            break;
+
+        case "0":
+            p2pNetworkService.Stop();
+            return;
+
+        default:
+            Console.WriteLine("Unknown menu option.");
+            break;
+    }
 }
 
-Console.WriteLine("\nResult: miner reward appears in balance only after enough confirmations.");
-
-static void PrintCoinbaseStatus(
-    Blockchain blockchain,
-    string minerAddress,
-    string rewardTransactionId,
-    string label)
+static async Task SendRawPacketAsync(string message)
 {
-    Block? rewardBlock = blockchain.Chain.FirstOrDefault(block =>
-        block.Transactions.Any(transaction => transaction.Id == rewardTransactionId));
-
-    if (rewardBlock == null)
+    try
     {
-        Console.WriteLine($"\n{label}");
-        Console.WriteLine("Reward block was not found in the chain.");
-        return;
+        using TcpClient client = new TcpClient();
+        await client.ConnectAsync("127.0.0.1", 5000);
+
+        await using NetworkStream stream = client.GetStream();
+        byte[] bytes = Encoding.UTF8.GetBytes(message + Environment.NewLine);
+        await stream.WriteAsync(bytes);
+
+        Console.WriteLine("Test packet sent.");
     }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Unable to send packet. Start the P2P node first. Error: {ex.Message}");
+    }
+}
 
-    int confirmations = blockchain.Chain.Count - rewardBlock.Index;
-    decimal balance = blockchain.GetBalance(minerAddress);
+static async Task SendFakeBlockAsync(Blockchain blockchain)
+{
+    Block previousBlock = blockchain.Chain[^1];
 
-    Console.WriteLine($"\n{label}");
-    Console.WriteLine($"Reward block index: {rewardBlock.Index}");
-    Console.WriteLine($"Confirmations: {confirmations}");
-    Console.WriteLine($"Miner balance: {balance}");
+    Block fakeBlock = new Block(
+        index: previousBlock.Index + 1,
+        previousHash: previousBlock.Hash,
+        transactions: new List<Transaction>
+        {
+            new Transaction("COINBASE", "fake-miner", 50, "", 0)
+        },
+        difficulty: 4
+    );
+
+    fakeBlock.Nonce = 123;
+    fakeBlock.Hash = "fake_hash_without_valid_proof_of_work";
+
+    string packet = JsonSerializer.Serialize(new
+    {
+        Type = "BLOCK",
+        Payload = fakeBlock
+    });
+
+    await SendRawPacketAsync(packet);
 }
