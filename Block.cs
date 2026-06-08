@@ -8,15 +8,24 @@ namespace HW2_BlockChain
 {
     public class Block
     {
-        public int Index { get; }
+        public int Index { get; set; }
         public string PreviousHash { get; set; }
         public string Hash { get; set; }
-        public long Timestamp { get; }
+        public long Timestamp { get; set; }
         public int Nonce { get; set; }
-        public int Difficulty { get; }
-        public List<Transaction> Transactions { get; }
-        public List<List<string>> MerkleTree { get; }
-        public string MerkleRoot { get; }
+        public int Difficulty { get; set; }
+        public List<Transaction> Transactions { get; set; }
+        public List<List<string>> MerkleTree { get; set; }
+        public string MerkleRoot { get; set; }
+
+        public Block()
+        {
+            PreviousHash = string.Empty;
+            Hash = string.Empty;
+            Transactions = new List<Transaction>();
+            MerkleTree = new List<List<string>>();
+            MerkleRoot = string.Empty;
+        }
 
         public Block(int index, string previousHash, List<Transaction> transactions, int difficulty)
         {

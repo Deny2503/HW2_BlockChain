@@ -15,6 +15,7 @@ namespace HW2_BlockChain
         public decimal BaseFeePerByte { get; } = 0.05m;
         public int MaxBlockSizeBytes { get; } = 1024;
         public int CoinbaseMaturity { get; set; } = 3;
+        public int MaxReorgDepth { get; set; } = 5;
 
         private const int Difficulty = 4;
 
@@ -41,6 +42,7 @@ namespace HW2_BlockChain
 
             return BaseFeePerByte * congestionMultiplier;
         }
+
 
         public decimal GetBalance(string address)
         {
@@ -107,6 +109,7 @@ namespace HW2_BlockChain
             }
 
             bool isCoinbase = transaction.From == "COINBASE";
+
             if (!isCoinbase)
             {
                 decimal currentFeePerByte = GetCurrentNetworkFee();
@@ -164,7 +167,7 @@ namespace HW2_BlockChain
         {
             if (!IsValidPeerBlock(peerBlock))
             {
-                Console.WriteLine("[P2P] Peer block rejected: invalid hash, index, previous hash, structure or Proof of Work.");
+                Console.WriteLine("[P2P] Peer block rejected: invalid hash, index, previous hash, timestamp, structure or Proof of Work.");
                 return false;
             }
 
@@ -198,12 +201,139 @@ namespace HW2_BlockChain
                 return false;
             }
 
-            if (peerBlock.Transactions == null || peerBlock.Transactions.Count == 0)
+            if (!HasValidTimestamp(peerBlock, previousBlock))
             {
                 return false;
             }
 
-            foreach (Transaction transaction in peerBlock.Transactions)
+            return HasValidBlockStructureAndProof(peerBlock);
+        }
+
+        public bool IsChainValid(List<Block>? chainToValidate = null)
+        {
+            List<Block> chain = chainToValidate ?? Chain;
+
+            if (chain.Count == 0)
+            {
+                return false;
+            }
+
+            if (chain[0].Hash != "GENESIS_HASH")
+            {
+                return false;
+            }
+
+            for (int i = 1; i < chain.Count; i++)
+            {
+                Block previousBlock = chain[i - 1];
+                Block currentBlock = chain[i];
+
+                if (currentBlock.Index != previousBlock.Index + 1)
+                {
+                    return false;
+                }
+
+                if (currentBlock.PreviousHash != previousBlock.Hash)
+                {
+                    return false;
+                }
+
+                if (!HasValidTimestamp(currentBlock, previousBlock))
+                {
+                    return false;
+                }
+
+                if (!HasValidBlockStructureAndProof(currentBlock))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public bool ResolveConflicts(List<Block> candidateChain)
+        {
+            if (candidateChain.Count <= Chain.Count)
+            {
+                Console.WriteLine("Відхилено: Отриманий ланцюг не довший за локальний.");
+                return false;
+            }
+
+            if (!IsChainValid(candidateChain))
+            {
+                Console.WriteLine("Відхилено: Отриманий ланцюг не пройшов валідацію.");
+                return false;
+            }
+
+            Block? forkPoint = FindForkPoint(candidateChain);
+
+            if (forkPoint == null)
+            {
+                Console.WriteLine("Відхилено: Не знайдено спільну точку розгалуження.");
+                return false;
+            }
+
+            int reorgDepth = Chain[^1].Index - forkPoint.Index;
+
+            Console.WriteLine($"Fork point: block #{forkPoint.Index}");
+            Console.WriteLine($"Reorg depth: {reorgDepth}");
+
+            if (reorgDepth > MaxReorgDepth)
+            {
+                Console.WriteLine("Відхилено: Спроба глибокої реорганізації. Локальні блоки вже фіналізовані.");
+                return false;
+            }
+
+            Chain.Clear();
+            Chain.AddRange(candidateChain);
+
+            Console.WriteLine("Консенсус прийнято: локальний ланцюг замінено довшим валідним ланцюгом.");
+            return true;
+        }
+
+        private Block? FindForkPoint(List<Block> candidateChain)
+        {
+            int maxIndex = Math.Min(Chain.Count, candidateChain.Count) - 1;
+
+            for (int i = maxIndex; i >= 0; i--)
+            {
+                if (Chain[i].Hash == candidateChain[i].Hash)
+                {
+                    return Chain[i];
+                }
+            }
+
+            return null;
+        }
+
+        private bool HasValidTimestamp(Block currentBlock, Block previousBlock)
+        {
+            long maxAllowedTimestamp = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds();
+
+            if (currentBlock.Timestamp <= previousBlock.Timestamp)
+            {
+                Console.WriteLine($"Відхилено: Час блоку #{currentBlock.Index} не більший за час попереднього блоку.");
+                return false;
+            }
+
+            if (currentBlock.Timestamp > maxAllowedTimestamp)
+            {
+                Console.WriteLine($"Відхилено: Блок #{currentBlock.Index} має timestamp занадто далеко в майбутньому.");
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool HasValidBlockStructureAndProof(Block block)
+        {
+            if (block.Transactions == null || block.Transactions.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (Transaction transaction in block.Transactions)
             {
                 if (!transaction.IsValid())
                 {
@@ -211,17 +341,17 @@ namespace HW2_BlockChain
                 }
             }
 
-            string recalculatedHash = CalculateBlockHash(peerBlock, peerBlock.Nonce);
+            string recalculatedHash = CalculateBlockHash(block, block.Nonce);
 
-            if (peerBlock.Hash != recalculatedHash)
+            if (block.Hash != recalculatedHash)
             {
                 return false;
             }
 
             try
             {
-                byte[] hashBytes = Convert.FromHexString(peerBlock.Hash);
-                return HashValidator.IsValid(hashBytes, peerBlock.Difficulty);
+                byte[] hashBytes = Convert.FromHexString(block.Hash);
+                return HashValidator.IsValid(hashBytes, block.Difficulty);
             }
             catch
             {
@@ -305,6 +435,11 @@ namespace HW2_BlockChain
                 transactions: validTransactions,
                 difficulty: Difficulty
             );
+
+            if (newBlock.Timestamp <= previousBlock.Timestamp)
+            {
+                newBlock.Timestamp = previousBlock.Timestamp + 1;
+            }
 
             Miner miner = new Miner();
 

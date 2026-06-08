@@ -3,99 +3,75 @@ using System.Text;
 using System.Text.Json;
 using HW2_BlockChain;
 
-Blockchain blockchain = new Blockchain();
-P2PNetworkService p2pNetworkService = new P2PNetworkService(blockchain, port: 5000);
-Task? serverTask = null;
+Console.WriteLine("===== CONSENSUS SECURITY TEST =====");
+Console.WriteLine("Time Warp Protection + Max Reorg Depth");
+Console.WriteLine();
 
-while (true)
-{
-    Console.WriteLine();
-    Console.WriteLine("1. Start P2P node");
-    Console.WriteLine("2. Send invalid JSON test packet");
-    Console.WriteLine("3. Send fake block test packet");
-    Console.WriteLine("4. Show Firewall Blacklist");
-    Console.WriteLine("0. Exit");
-    Console.Write("Choose option: ");
+Blockchain nodeA = new Blockchain();
+Blockchain nodeB = new Blockchain();
 
-    string? choice = Console.ReadLine();
+nodeA.MaxReorgDepth = 5;
+nodeB.MaxReorgDepth = 5;
 
-    switch (choice)
+Console.WriteLine($"MaxReorgDepth: {nodeA.MaxReorgDepth}");
+Console.WriteLine("Shared genesis block hash: " + nodeA.Chain[0].Hash);
+Console.WriteLine();
+
+Console.WriteLine("--- Part 1: Time Warp Protection ---");
+Block previousBlock = nodeA.Chain[^1];
+
+Block futureBlock = new Block(
+    index: previousBlock.Index + 1,
+    previousHash: previousBlock.Hash,
+    transactions: new List<Transaction>
     {
-        case "1":
-            if (serverTask == null)
-            {
-                serverTask = Task.Run(() => p2pNetworkService.StartAsync());
-                await Task.Delay(300);
-            }
-            else
-            {
-                Console.WriteLine("P2P node is already started.");
-            }
-            break;
+        new Transaction("COINBASE", "time-warp-attacker", 50, "", 0)
+    },
+    difficulty: 4
+);
 
-        case "2":
-            await SendRawPacketAsync("THIS_IS_NOT_JSON");
-            break;
+futureBlock.Timestamp = DateTimeOffset.UtcNow.AddYears(1).ToUnixTimeSeconds();
+MiningResult futureMiningResult = new Miner().Mine(futureBlock);
+futureBlock.Nonce = futureMiningResult.Nonce;
+futureBlock.Hash = futureMiningResult.Hash;
 
-        case "3":
-            await SendFakeBlockAsync(blockchain);
-            break;
+bool futureBlockAccepted = nodeA.TryAddBlockFromPeer(futureBlock);
+Console.WriteLine($"Future timestamp block accepted: {futureBlockAccepted}");
+Console.WriteLine();
 
-        case "4":
-            p2pNetworkService.ShowFirewallBlacklist();
-            break;
+Console.WriteLine("--- Part 2: 51% Attack / Deep Reorg Simulation ---");
+Console.WriteLine("NodeA honest network mines blocks #1..#6");
+MineBlocks(nodeA, "honest-miner", 6);
 
-        case "0":
-            p2pNetworkService.Stop();
-            return;
+Console.WriteLine();
+Console.WriteLine("NodeB attacker secretly mines longer chain #1..#8 from genesis");
+MineBlocks(nodeB, "attacker-miner", 8);
 
-        default:
-            Console.WriteLine("Unknown menu option.");
-            break;
-    }
-}
+Console.WriteLine();
+Console.WriteLine($"NodeA chain height: {nodeA.Chain[^1].Index}");
+Console.WriteLine($"NodeB chain height: {nodeB.Chain[^1].Index}");
+Console.WriteLine($"NodeB chain is longer: {nodeB.Chain.Count > nodeA.Chain.Count}");
+Console.WriteLine();
 
-static async Task SendRawPacketAsync(string message)
+Console.WriteLine("Attacker sends longer chain to NodeA...");
+bool reorgAccepted = nodeA.ResolveConflicts(nodeB.Chain);
+
+Console.WriteLine();
+Console.WriteLine($"Reorg accepted: {reorgAccepted}");
+Console.WriteLine($"NodeA final height: {nodeA.Chain[^1].Index}");
+Console.WriteLine(
+    reorgAccepted
+        ? "Result: protection failed. Hacker chain replaced local history."
+        : "Result: protection worked. Deep reorg attack was rejected."
+);
+
+static void MineBlocks(Blockchain blockchain, string minerAddress, int count)
 {
-    try
+    for (int i = 0; i < count; i++)
     {
-        using TcpClient client = new TcpClient();
-        await client.ConnectAsync("127.0.0.1", 5000);
-
-        await using NetworkStream stream = client.GetStream();
-        byte[] bytes = Encoding.UTF8.GetBytes(message + Environment.NewLine);
-        await stream.WriteAsync(bytes);
-
-        Console.WriteLine("Test packet sent.");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Unable to send packet. Start the P2P node first. Error: {ex.Message}");
-    }
-}
-
-static async Task SendFakeBlockAsync(Blockchain blockchain)
-{
-    Block previousBlock = blockchain.Chain[^1];
-
-    Block fakeBlock = new Block(
-        index: previousBlock.Index + 1,
-        previousHash: previousBlock.Hash,
-        transactions: new List<Transaction>
+        blockchain.AddBlock(new List<Transaction>
         {
-            new Transaction("COINBASE", "fake-miner", 50, "", 0)
-        },
-        difficulty: 4
-    );
-
-    fakeBlock.Nonce = 123;
-    fakeBlock.Hash = "fake_hash_without_valid_proof_of_work";
-
-    string packet = JsonSerializer.Serialize(new
-    {
-        Type = "BLOCK",
-        Payload = fakeBlock
-    });
-
-    await SendRawPacketAsync(packet);
+            new Transaction("COINBASE", minerAddress, 50, "", 0)
+        });
+    }
 }
