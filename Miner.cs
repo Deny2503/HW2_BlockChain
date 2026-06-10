@@ -20,6 +20,9 @@ namespace HW2_BlockChain
                 builder.Append(transaction.From);
                 builder.Append(transaction.To);
                 builder.Append(transaction.Amount);
+                builder.Append(transaction.Fee);
+                builder.Append(transaction.TokenSymbol);
+                builder.Append(transaction.Timestamp);
             }
 
             return builder.ToString();

@@ -77,7 +77,7 @@ namespace HW2_BlockChain
             }
 
             Console.WriteLine(
-                $"🏆 Biggest transaction in network: " +
+                $"Biggest transaction in network: " +
                 $"Block #{blockNumber} | " +
                 $"{biggestTransaction.From} -> {biggestTransaction.To} | " +
                 $"Amount: {biggestTransaction.Amount}"

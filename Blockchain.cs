@@ -16,6 +16,7 @@ namespace HW2_BlockChain
         public int MaxBlockSizeBytes { get; } = 1024;
         public int CoinbaseMaturity { get; set; } = 3;
         public int MaxReorgDepth { get; set; } = 5;
+        public decimal MiningReward { get; set; } = 50m;
 
         private const int Difficulty = 4;
 
@@ -23,41 +24,35 @@ namespace HW2_BlockChain
         {
             Chain = new List<Block>();
             PendingTransactions = new List<Transaction>();
-
             CreateGenesisBlock();
         }
 
         public decimal GetCurrentNetworkFee()
         {
             int mempoolSizeBytes = PendingTransactions.Sum(transaction => transaction.Size);
-
             if (mempoolSizeBytes <= MaxBlockSizeBytes)
             {
                 return BaseFeePerByte;
             }
 
-            int congestionMultiplier = (int)Math.Ceiling(
-                (decimal)mempoolSizeBytes / MaxBlockSizeBytes
-            );
-
+            int congestionMultiplier = (int)Math.Ceiling((decimal)mempoolSizeBytes / MaxBlockSizeBytes);
             return BaseFeePerByte * congestionMultiplier;
         }
 
-
-        public decimal GetBalance(string address)
+        public decimal GetBalance(string address, string tokenSymbol = "MAIN")
         {
+            tokenSymbol = NormalizeToken(tokenSymbol);
             decimal balance = 0;
 
             foreach (Block block in Chain)
             {
                 foreach (Transaction transaction in block.Transactions)
                 {
-                    if (transaction.To == address)
+                    if (transaction.TokenSymbol == tokenSymbol && transaction.To == address)
                     {
                         if (transaction.From == "COINBASE")
                         {
                             int confirmations = Chain.Count - block.Index;
-
                             if (confirmations >= CoinbaseMaturity)
                             {
                                 balance += transaction.Amount;
@@ -69,9 +64,13 @@ namespace HW2_BlockChain
                         }
                     }
 
-                    if (transaction.From == address)
+                    if (transaction.TokenSymbol == tokenSymbol && transaction.From == address)
                     {
                         balance -= transaction.Amount;
+                    }
+
+                    if (tokenSymbol == "MAIN" && transaction.From == address)
+                    {
                         balance -= transaction.Fee;
                     }
                 }
@@ -80,65 +79,91 @@ namespace HW2_BlockChain
             return balance;
         }
 
-        public decimal GetPendingBalance(string address)
+        public decimal GetPendingBalance(string address, string tokenSymbol = "MAIN")
         {
-            decimal balance = GetBalance(address);
+            tokenSymbol = NormalizeToken(tokenSymbol);
+            decimal balance = GetBalance(address, tokenSymbol);
 
             foreach (Transaction transaction in PendingTransactions)
             {
-                if (transaction.From == address)
-                {
-                    balance -= transaction.Amount;
-                    balance -= transaction.Fee;
-                }
-
-                if (transaction.To == address && transaction.From != "COINBASE")
+                if (transaction.TokenSymbol == tokenSymbol && transaction.To == address && transaction.From != "COINBASE")
                 {
                     balance += transaction.Amount;
+                }
+
+                if (transaction.TokenSymbol == tokenSymbol && transaction.From == address)
+                {
+                    balance -= transaction.Amount;
+                }
+
+                if (tokenSymbol == "MAIN" && transaction.From == address)
+                {
+                    balance -= transaction.Fee;
                 }
             }
 
             return balance;
         }
 
+        public List<string> GetKnownTokenSymbols()
+        {
+            return Chain.SelectMany(block => block.Transactions)
+                .Concat(PendingTransactions)
+                .Select(transaction => transaction.TokenSymbol)
+                .Append("MAIN")
+                .Distinct()
+                .OrderBy(symbol => symbol)
+                .ToList();
+        }
+
         public void AddTransaction(Transaction transaction)
         {
+            transaction.TokenSymbol = NormalizeToken(transaction.TokenSymbol);
+
             if (!transaction.IsValid())
             {
                 throw new Exception("Транзакція не пройшла перевірку підпису");
             }
 
-            bool isCoinbase = transaction.From == "COINBASE";
-
-            if (!isCoinbase)
+            if (transaction.From == "COINBASE")
             {
-                decimal currentFeePerByte = GetCurrentNetworkFee();
-                decimal minimumRequiredFee = transaction.Size * currentFeePerByte;
+                throw new Exception("COINBASE транзакції створюються тільки під час майнінгу");
+            }
 
-                if (transaction.Fee < minimumRequiredFee)
+            if (transaction.From == "MINT")
+            {
+                if (transaction.TokenSymbol == "MAIN")
                 {
-                    throw new Exception(
-                        $"Комісія занадто мала. Мінімум: {minimumRequiredFee:F2}, " +
-                        $"поточний тариф: {currentFeePerByte:F2} за байт"
-                    );
+                    throw new Exception("Не можна випускати MAIN через Mint");
                 }
 
-                decimal availableBalance = GetPendingBalance(transaction.From);
-                decimal totalCost = transaction.Amount + transaction.Fee;
+                PendingTransactions.Add(transaction);
+                return;
+            }
 
-                if (availableBalance < totalCost)
-                {
-                    throw new Exception(
-                        $"Недостатньо коштів. Доступно: {availableBalance:F2}, потрібно: {totalCost:F2}"
-                    );
-                }
+            decimal currentFeePerByte = GetCurrentNetworkFee();
+            decimal minimumRequiredFee = transaction.Size * currentFeePerByte;
+            if (transaction.Fee < minimumRequiredFee)
+            {
+                throw new Exception($"Комісія занадто мала. Мінімум: {minimumRequiredFee:F2}, поточний тариф: {currentFeePerByte:F2} за байт");
+            }
+
+            decimal tokenBalance = GetPendingBalance(transaction.From, transaction.TokenSymbol);
+            decimal mainBalance = GetPendingBalance(transaction.From, "MAIN");
+
+            if (tokenBalance < transaction.Amount)
+            {
+                throw new Exception($"Недостатньо токена {transaction.TokenSymbol}. Доступно: {tokenBalance:F2}, потрібно: {transaction.Amount:F2}");
+            }
+
+            if (mainBalance < transaction.Fee)
+            {
+                throw new Exception($"Недостатньо MAIN для комісії. Доступно: {mainBalance:F2}, потрібно: {transaction.Fee:F2}");
             }
 
             if (!string.IsNullOrWhiteSpace(transaction.ReplacesTxId))
             {
-                Transaction? oldTransaction = PendingTransactions
-                    .FirstOrDefault(pendingTransaction => pendingTransaction.Id == transaction.ReplacesTxId);
-
+                Transaction? oldTransaction = PendingTransactions.FirstOrDefault(p => p.Id == transaction.ReplacesTxId);
                 if (oldTransaction == null)
                 {
                     throw new Exception("Стару транзакцію не знайдено у Mempool");
@@ -155,12 +180,61 @@ namespace HW2_BlockChain
                 }
 
                 PendingTransactions.Remove(oldTransaction);
-                PendingTransactions.Add(transaction);
-
-                return;
             }
 
             PendingTransactions.Add(transaction);
+        }
+
+        public void MinePendingTransactions(string minerAddress)
+        {
+            List<Transaction> transactions = new List<Transaction>();
+            transactions.Add(new Transaction("COINBASE", minerAddress, MiningReward, "", 0, "MAIN"));
+            transactions.AddRange(PendingTransactions.OrderByDescending(transaction => transaction.Fee).ToList());
+            AddBlock(transactions, minerAddress);
+        }
+
+        public void AddBlock(List<Transaction> transactions, string minerAddress = "")
+        {
+            List<Transaction> validTransactions = new();
+            foreach (Transaction transaction in transactions)
+            {
+                if (transaction.IsValid())
+                {
+                    validTransactions.Add(transaction);
+                }
+                else
+                {
+                    Console.WriteLine("Transaction rejected: invalid signature.");
+                }
+            }
+
+            if (validTransactions.Count == 0)
+            {
+                Console.WriteLine("No valid transactions for block.");
+                return;
+            }
+
+            Block previousBlock = Chain[^1];
+            Block newBlock = new Block(Chain.Count, previousBlock.Hash, validTransactions, Difficulty, minerAddress);
+
+            if (newBlock.Timestamp <= previousBlock.Timestamp)
+            {
+                newBlock.Timestamp = previousBlock.Timestamp + 1;
+            }
+
+            Miner miner = new Miner();
+            MiningResult result = miner.Mine(newBlock);
+            newBlock.Nonce = result.Nonce;
+            newBlock.Hash = result.Hash;
+
+            Chain.Add(newBlock);
+
+            foreach (Transaction transaction in validTransactions)
+            {
+                PendingTransactions.RemoveAll(pending => pending.Id == transaction.Id);
+            }
+
+            Console.WriteLine($"Block #{newBlock.Index} added. Miner: {minerAddress}");
         }
 
         public bool TryAddBlockFromPeer(Block peerBlock)
@@ -172,7 +246,6 @@ namespace HW2_BlockChain
             }
 
             Chain.Add(peerBlock);
-
             foreach (Transaction transaction in peerBlock.Transactions)
             {
                 PendingTransactions.RemoveAll(pending => pending.Id == transaction.Id);
@@ -182,43 +255,10 @@ namespace HW2_BlockChain
             return true;
         }
 
-        private bool IsValidPeerBlock(Block peerBlock)
-        {
-            if (peerBlock == null)
-            {
-                return false;
-            }
-
-            Block previousBlock = Chain[^1];
-
-            if (peerBlock.Index != previousBlock.Index + 1)
-            {
-                return false;
-            }
-
-            if (peerBlock.PreviousHash != previousBlock.Hash)
-            {
-                return false;
-            }
-
-            if (!HasValidTimestamp(peerBlock, previousBlock))
-            {
-                return false;
-            }
-
-            return HasValidBlockStructureAndProof(peerBlock);
-        }
-
         public bool IsChainValid(List<Block>? chainToValidate = null)
         {
             List<Block> chain = chainToValidate ?? Chain;
-
-            if (chain.Count == 0)
-            {
-                return false;
-            }
-
-            if (chain[0].Hash != "GENESIS_HASH")
+            if (chain.Count == 0 || chain[0].Hash != "GENESIS_HASH")
             {
                 return false;
             }
@@ -228,25 +268,10 @@ namespace HW2_BlockChain
                 Block previousBlock = chain[i - 1];
                 Block currentBlock = chain[i];
 
-                if (currentBlock.Index != previousBlock.Index + 1)
-                {
-                    return false;
-                }
-
-                if (currentBlock.PreviousHash != previousBlock.Hash)
-                {
-                    return false;
-                }
-
-                if (!HasValidTimestamp(currentBlock, previousBlock))
-                {
-                    return false;
-                }
-
-                if (!HasValidBlockStructureAndProof(currentBlock))
-                {
-                    return false;
-                }
+                if (currentBlock.Index != previousBlock.Index + 1) return false;
+                if (currentBlock.PreviousHash != previousBlock.Hash) return false;
+                if (!HasValidTimestamp(currentBlock, previousBlock)) return false;
+                if (!HasValidBlockStructureAndProof(currentBlock)) return false;
             }
 
             return true;
@@ -267,7 +292,6 @@ namespace HW2_BlockChain
             }
 
             Block? forkPoint = FindForkPoint(candidateChain);
-
             if (forkPoint == null)
             {
                 Console.WriteLine("Відхилено: Не знайдено спільну точку розгалуження.");
@@ -275,10 +299,6 @@ namespace HW2_BlockChain
             }
 
             int reorgDepth = Chain[^1].Index - forkPoint.Index;
-
-            Console.WriteLine($"Fork point: block #{forkPoint.Index}");
-            Console.WriteLine($"Reorg depth: {reorgDepth}");
-
             if (reorgDepth > MaxReorgDepth)
             {
                 Console.WriteLine("Відхилено: Спроба глибокої реорганізації. Локальні блоки вже фіналізовані.");
@@ -287,7 +307,6 @@ namespace HW2_BlockChain
 
             Chain.Clear();
             Chain.AddRange(candidateChain);
-
             Console.WriteLine("Консенсус прийнято: локальний ланцюг замінено довшим валідним ланцюгом.");
             return true;
         }
@@ -295,7 +314,6 @@ namespace HW2_BlockChain
         private Block? FindForkPoint(List<Block> candidateChain)
         {
             int maxIndex = Math.Min(Chain.Count, candidateChain.Count) - 1;
-
             for (int i = maxIndex; i >= 0; i--)
             {
                 if (Chain[i].Hash == candidateChain[i].Hash)
@@ -303,50 +321,34 @@ namespace HW2_BlockChain
                     return Chain[i];
                 }
             }
-
             return null;
+        }
+
+        private bool IsValidPeerBlock(Block peerBlock)
+        {
+            if (peerBlock == null) return false;
+            Block previousBlock = Chain[^1];
+            if (peerBlock.Index != previousBlock.Index + 1) return false;
+            if (peerBlock.PreviousHash != previousBlock.Hash) return false;
+            if (!HasValidTimestamp(peerBlock, previousBlock)) return false;
+            return HasValidBlockStructureAndProof(peerBlock);
         }
 
         private bool HasValidTimestamp(Block currentBlock, Block previousBlock)
         {
             long maxAllowedTimestamp = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds();
-
-            if (currentBlock.Timestamp <= previousBlock.Timestamp)
-            {
-                Console.WriteLine($"Відхилено: Час блоку #{currentBlock.Index} не більший за час попереднього блоку.");
-                return false;
-            }
-
-            if (currentBlock.Timestamp > maxAllowedTimestamp)
-            {
-                Console.WriteLine($"Відхилено: Блок #{currentBlock.Index} має timestamp занадто далеко в майбутньому.");
-                return false;
-            }
-
+            if (currentBlock.Timestamp <= previousBlock.Timestamp) return false;
+            if (currentBlock.Timestamp > maxAllowedTimestamp) return false;
             return true;
         }
 
         private bool HasValidBlockStructureAndProof(Block block)
         {
-            if (block.Transactions == null || block.Transactions.Count == 0)
-            {
-                return false;
-            }
-
-            foreach (Transaction transaction in block.Transactions)
-            {
-                if (!transaction.IsValid())
-                {
-                    return false;
-                }
-            }
+            if (block.Transactions == null || block.Transactions.Count == 0) return false;
+            if (block.Transactions.Any(transaction => !transaction.IsValid())) return false;
 
             string recalculatedHash = CalculateBlockHash(block, block.Nonce);
-
-            if (block.Hash != recalculatedHash)
-            {
-                return false;
-            }
+            if (block.Hash != recalculatedHash) return false;
 
             try
             {
@@ -361,18 +363,10 @@ namespace HW2_BlockChain
 
         private string CalculateBlockHash(Block block, int nonce)
         {
-            byte[] prefixBytes = Encoding.UTF8.GetBytes(
-                block.PreviousHash + GetTransactionsText(block.Transactions) + block.Timestamp
-            );
-
+            byte[] prefixBytes = Encoding.UTF8.GetBytes(block.PreviousHash + GetTransactionsText(block.Transactions) + block.Timestamp);
             byte[] buffer = new byte[prefixBytes.Length + 4];
             Array.Copy(prefixBytes, buffer, prefixBytes.Length);
-
-            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(
-                buffer.AsSpan(prefixBytes.Length, 4),
-                nonce
-            );
-
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(prefixBytes.Length, 4), nonce);
             byte[] hashBytes = SHA256.HashData(buffer);
             return HashConverter.ToHex(hashBytes);
         }
@@ -380,82 +374,28 @@ namespace HW2_BlockChain
         private string GetTransactionsText(List<Transaction> transactions)
         {
             StringBuilder builder = new StringBuilder();
-
             foreach (Transaction transaction in transactions)
             {
                 builder.Append(transaction.From);
                 builder.Append(transaction.To);
                 builder.Append(transaction.Amount);
+                builder.Append(transaction.Fee);
+                builder.Append(transaction.TokenSymbol);
+                builder.Append(transaction.Timestamp);
             }
-
             return builder.ToString();
         }
 
         private void CreateGenesisBlock()
         {
-            Block genesisBlock = new Block(
-                index: 0,
-                previousHash: "0",
-                transactions: new List<Transaction>(),
-                difficulty: Difficulty
-            );
-
+            Block genesisBlock = new Block(0, "0", new List<Transaction>(), Difficulty, "GENESIS");
             genesisBlock.Hash = "GENESIS_HASH";
-
             Chain.Add(genesisBlock);
         }
 
-        public void AddBlock(List<Transaction> transactions)
+        private static string NormalizeToken(string tokenSymbol)
         {
-            List<Transaction> validTransactions = new();
-
-            foreach (Transaction transaction in transactions)
-            {
-                if (transaction.From == "COINBASE" || transaction.IsValid())
-                {
-                    validTransactions.Add(transaction);
-                }
-                else
-                {
-                    Console.WriteLine("Transaction rejected: invalid signature.");
-                }
-            }
-
-            if (validTransactions.Count == 0)
-            {
-                Console.WriteLine("No valid transactions for block.");
-                return;
-            }
-
-            Block previousBlock = Chain[^1];
-
-            Block newBlock = new Block(
-                index: Chain.Count,
-                previousHash: previousBlock.Hash,
-                transactions: validTransactions,
-                difficulty: Difficulty
-            );
-
-            if (newBlock.Timestamp <= previousBlock.Timestamp)
-            {
-                newBlock.Timestamp = previousBlock.Timestamp + 1;
-            }
-
-            Miner miner = new Miner();
-
-            MiningResult result = miner.Mine(newBlock);
-
-            newBlock.Nonce = result.Nonce;
-            newBlock.Hash = result.Hash;
-
-            Chain.Add(newBlock);
-
-            foreach (Transaction transaction in validTransactions)
-            {
-                PendingTransactions.Remove(transaction);
-            }
-
-            Console.WriteLine($"Block #{newBlock.Index} added.");
+            return string.IsNullOrWhiteSpace(tokenSymbol) ? "MAIN" : tokenSymbol.Trim().ToUpperInvariant();
         }
     }
 }

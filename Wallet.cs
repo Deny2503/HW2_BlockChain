@@ -18,30 +18,35 @@ namespace HW2_BlockChain
         public Wallet(string ownerName)
         {
             OwnerName = ownerName;
-
             privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-
-            byte[] publicKeyBytes = privateKey.ExportSubjectPublicKeyInfo();
-
-            PublicKey = Convert.ToBase64String(publicKeyBytes);
+            PublicKey = Convert.ToBase64String(privateKey.ExportSubjectPublicKeyInfo());
             Address = GenerateAddress(PublicKey);
+        }
+
+        public Wallet(string ownerName, byte[] privateKeyBytes, string publicKey)
+        {
+            OwnerName = ownerName;
+            privateKey = ECDsa.Create();
+            privateKey.ImportPkcs8PrivateKey(privateKeyBytes, out _);
+            PublicKey = publicKey;
+            Address = GenerateAddress(PublicKey);
+        }
+
+        public byte[] ExportPrivateKey()
+        {
+            return privateKey.ExportPkcs8PrivateKey();
         }
 
         public byte[] Sign(string data)
         {
             byte[] dataBytes = Encoding.UTF8.GetBytes(data);
-
-            return privateKey.SignData(
-                dataBytes,
-                HashAlgorithmName.SHA256
-            );
+            return privateKey.SignData(dataBytes, HashAlgorithmName.SHA256);
         }
 
         public static string GenerateAddress(string publicKey)
         {
             byte[] publicKeyBytes = Encoding.UTF8.GetBytes(publicKey);
             byte[] hashBytes = SHA256.HashData(publicKeyBytes);
-
             return Convert.ToHexString(hashBytes).ToLower();
         }
     }

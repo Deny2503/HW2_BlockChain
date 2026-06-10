@@ -17,6 +17,7 @@ namespace HW2_BlockChain
         public List<Transaction> Transactions { get; set; }
         public List<List<string>> MerkleTree { get; set; }
         public string MerkleRoot { get; set; }
+        public string MinerAddress { get; set; }
 
         public Block()
         {
@@ -25,9 +26,10 @@ namespace HW2_BlockChain
             Transactions = new List<Transaction>();
             MerkleTree = new List<List<string>>();
             MerkleRoot = string.Empty;
+            MinerAddress = string.Empty;
         }
 
-        public Block(int index, string previousHash, List<Transaction> transactions, int difficulty)
+        public Block(int index, string previousHash, List<Transaction> transactions, int difficulty, string minerAddress = "")
         {
             Index = index;
             PreviousHash = previousHash;
@@ -37,6 +39,7 @@ namespace HW2_BlockChain
             Difficulty = difficulty;
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             Hash = "";
+            MinerAddress = minerAddress;
         }
     }
 }
